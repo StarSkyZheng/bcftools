@@ -7,6 +7,14 @@ Changes affecting specific commands:
     - In addition to `--rename-annots`, which requires a file with name mappings,
       it is now possible to do the same on the command line `-c NEW_TAG:=OLD_TAG`
 
+* bcftools mpileup
+
+    - More flexible read filtering via options
+        --df, --decl-flags  ..  Skip reads with all of the bits set
+        --ef, --excl-flags  ..  Skip reads with any of the bits set
+        --if, --incl-flags  ..  Skip reads with none of the bits set
+        --nf, --need-flags  ..  Skip reads with some of the bits unset
+
 * bcftools +setGT
 
     - Fix a bug in `-t q -e EXPR` logic applied on FORMAT fields, sites with all

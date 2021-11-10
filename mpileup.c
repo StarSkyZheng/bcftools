@@ -69,7 +69,7 @@ typedef struct _mplp_pileup_t mplp_pileup_t;
 typedef struct {
     int min_mq, flag, min_baseQ, max_baseQ, delta_baseQ, capQ_thres, max_depth,
         max_indel_depth, max_read_len, fmt_flag, ambig_reads;
-    int rflag_require, rflag_filter, output_type;
+    int rflag_need, rflag_incl, rflag_excl, rflag_decl, output_type;
     int openQ, extQ, tandemQ, min_support, indel_win_size; // for indels
     double min_frac; // for indels
     double indel_bias;
@@ -197,8 +197,10 @@ static int mplp_func(void *data, bam1_t *b)
         // The 'B' cigar operation is not part of the specification, considering as obsolete.
         //  bam_remove_B(b);
         if (b->core.tid < 0 || (b->core.flag&BAM_FUNMAP)) continue; // exclude unmapped reads
-        if (ma->conf->rflag_require && !(ma->conf->rflag_require&b->core.flag)) continue;
-        if (ma->conf->rflag_filter && ma->conf->rflag_filter&b->core.flag) continue;
+        if (ma->conf->rflag_need && (ma->conf->rflag_need&b->core.flag)!=ma->conf->rflag_need ) continue;
+        if (ma->conf->rflag_decl && (ma->conf->rflag_decl&b->core.flag)==ma->conf->rflag_decl ) continue;
+        if (ma->conf->rflag_incl && !(ma->conf->rflag_incl&b->core.flag)) continue;
+        if (ma->conf->rflag_excl && ma->conf->rflag_excl&b->core.flag) continue;
         if (ma->conf->bed)
         {
             // test overlap
@@ -1087,8 +1089,10 @@ static void list_annotations(FILE *fp)
 
 static void print_usage(FILE *fp, const mplp_conf_t *mplp)
 {
-    char *tmp_require = bam_flag2str(mplp->rflag_require);
-    char *tmp_filter  = bam_flag2str(mplp->rflag_filter);
+    char *tmp_decl = bam_flag2str(mplp->rflag_decl);
+    char *tmp_need = bam_flag2str(mplp->rflag_need);
+    char *tmp_incl = bam_flag2str(mplp->rflag_incl);
+    char *tmp_excl = bam_flag2str(mplp->rflag_excl);
 
     // Display usage information, formatted for the standard 80 columns.
     // (The unusual string formatting here aids the readability of this
@@ -1122,10 +1126,12 @@ static void print_usage(FILE *fp, const mplp_conf_t *mplp)
         "  -r, --regions REG[,...] Comma separated list of regions in which pileup is generated\n"
         "  -R, --regions-file FILE Restrict to regions listed in a file\n"
         "      --ignore-RG         Ignore RG tags (one BAM = one sample)\n"
-        "  --rf, --incl-flags STR|INT  Required flags: skip reads with none of the bits set [%s]\n", tmp_require);
+        "  --df, --decl-flags STR|INT  Skip reads with all of the bits set []\n");
     fprintf(fp,
-        "  --ff, --excl-flags STR|INT  Filter flags: skip reads with any of the bits set\n"
-        "                                            [%s]\n", tmp_filter);
+        "  --ef, --excl-flags STR|INT  Skip reads with any of the bits set [%s]\n", tmp_excl);
+    fprintf(fp,
+        "  --if, --incl-flags STR|INT  Skip reads with none of the bits set []\n"
+        "  --nf, --need-flags STR|INT  Skip reads with some of the bits unset []\n");
     fprintf(fp,
         "  -s, --samples LIST      Comma separated list of samples to include\n"
         "  -S, --samples-file FILE File of samples to include\n"
@@ -1184,8 +1190,10 @@ static void print_usage(FILE *fp, const mplp_conf_t *mplp)
         "   bcftools mpileup -Ou -f reference.fa alignments.bam | bcftools call -mv -Ob -o calls.bcf\n"
         "\n");
 
-    free(tmp_require);
-    free(tmp_filter);
+    free(tmp_decl);
+    free(tmp_need);
+    free(tmp_incl);
+    free(tmp_excl);
 }
 
 int main_mpileup(int argc, char *argv[])
@@ -1206,7 +1214,7 @@ int main_mpileup(int argc, char *argv[])
     mplp.flag = MPLP_NO_ORPHAN | MPLP_REALN | MPLP_REALN_PARTIAL
               | MPLP_SMART_OVERLAPS;
     mplp.argc = argc; mplp.argv = argv;
-    mplp.rflag_filter = BAM_FUNMAP | BAM_FSECONDARY | BAM_FQCFAIL | BAM_FDUP;
+    mplp.rflag_excl = BAM_FUNMAP | BAM_FSECONDARY | BAM_FQCFAIL | BAM_FDUP;
     mplp.output_fname = NULL;
     mplp.output_type = FT_VCF;
     mplp.record_cmd_line = 1;
@@ -1224,8 +1232,14 @@ int main_mpileup(int argc, char *argv[])
     {
         {"rf", required_argument, NULL, 1},   // require flag
         {"ff", required_argument, NULL, 2},   // filter flag
-        {"incl-flags", required_argument, NULL, 1},
-        {"excl-flags", required_argument, NULL, 2},
+        {"nf", required_argument, NULL, 16},
+        {"if", required_argument, NULL, 17},
+        {"ef", required_argument, NULL, 18},
+        {"df", required_argument, NULL, 19},
+        {"need-flags", required_argument, NULL, 16},
+        {"incl-flags", required_argument, NULL, 17},
+        {"excl-flags", required_argument, NULL, 18},
+        {"decl-flags", required_argument, NULL, 19},
         {"output", required_argument, NULL, 3},
         {"open-prob", required_argument, NULL, 4},
         {"ignore-RG", no_argument, NULL, 5},
@@ -1288,12 +1302,30 @@ int main_mpileup(int argc, char *argv[])
         switch (c) {
         case 'x': mplp.flag &= ~MPLP_SMART_OVERLAPS; break;
         case  1 :
-            mplp.rflag_require = bam_str2flag(optarg);
-            if ( mplp.rflag_require<0 ) { fprintf(stderr,"Could not parse --rf %s\n", optarg); return 1; }
+            fprintf(stderr,"The option --rf has been renamed, please use --if instead\n");
+            mplp.rflag_incl = bam_str2flag(optarg);
+            if ( mplp.rflag_incl<0 ) { fprintf(stderr,"Could not parse --if %s\n", optarg); return 1; }
+            break;
+        case  17 :
+            mplp.rflag_incl = bam_str2flag(optarg);
+            if ( mplp.rflag_incl<0 ) { fprintf(stderr,"Could not parse --if %s\n", optarg); return 1; }
             break;
         case  2 :
-            mplp.rflag_filter = bam_str2flag(optarg);
-            if ( mplp.rflag_filter<0 ) { fprintf(stderr,"Could not parse --ff %s\n", optarg); return 1; }
+            fprintf(stderr,"The option -ff has been renamed, please use --ef instead\n");
+            mplp.rflag_excl = bam_str2flag(optarg);
+            if ( mplp.rflag_excl<0 ) { fprintf(stderr,"Could not parse --ef %s\n", optarg); return 1; }
+            break;
+        case  18 :
+            mplp.rflag_excl = bam_str2flag(optarg);
+            if ( mplp.rflag_excl <0 ) { fprintf(stderr,"Could not parse --ef %s\n", optarg); return 1; }
+            break;
+        case  16 :
+            mplp.rflag_need = bam_str2flag(optarg);
+            if ( mplp.rflag_need <0 ) { fprintf(stderr,"Could not parse --nf %s\n", optarg); return 1; }
+            break;
+        case  19 :
+            mplp.rflag_decl = bam_str2flag(optarg);
+            if ( mplp.rflag_decl <0 ) { fprintf(stderr,"Could not parse --df %s\n", optarg); return 1; }
             break;
         case  3 : mplp.output_fname = optarg; break;
         case  4 : mplp.openQ = atoi(optarg); break;
